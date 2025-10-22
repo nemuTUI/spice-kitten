@@ -24,3 +24,8 @@ target_link_libraries(spice-kitten PRIVATE
     png
     spice
 )
+
+install(TARGETS spice-kitten
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+    COMPONENT Runtime
+)
