@@ -1,0 +1,29 @@
+name: build-linux
+
+on:
+  pull_request:
+    types: [ opened, reopened, synchronize ]
+  workflow_dispatch:
+    branches: [ master ]
+  push:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install libssl-dev libx11-dev \
+            libpng-dev libspice-protocol-dev ninja-build
+
+      - name: Get sources
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 1
+
+      - name: Build
+        run: |
+          cmake -S. -B build -G Ninja
+          cmake --build build -- -v
