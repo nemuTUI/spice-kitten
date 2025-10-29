@@ -5,11 +5,8 @@
 #define SPICE_DEFAULT_ADDR "127.0.0.1"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <stdbool.h>
-#include <stdatomic.h>
-#include <netinet/in.h>
-
-#include <X11/XKBlib.h>
 
 #ifdef _cplusplus
 extern "C" {
@@ -26,9 +23,11 @@ bool spice_channel_init_inputs(spice_t *spice);
 void *spice_channel_main_loop(void *ctx);
 void *spice_channel_display_loop(void *ctx); /* channel init is not required */
 void *spice_draw_screen(void *ctx);
-void spice_send_key(spice_t *spice, uint32_t keycode, KeySym keysym, bool up);
+void spice_send_key_release(spice_t *spice, uint32_t keycode, uint64_t keysym);
+void spice_send_key_press(spice_t *spice, uint32_t keycode, uint64_t keysym);
 void spice_send_mouse_motion(spice_t *spice, int x, int y);
-void spice_send_mouse_button(spice_t *spice, unsigned int button, bool up);
+void spice_send_mouse_button_release(spice_t *spice, unsigned int button);
+void spice_send_mouse_button_press(spice_t *spice, unsigned int button);
 
 #ifdef _cplusplus
 }

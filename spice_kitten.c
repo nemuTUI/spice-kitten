@@ -11,6 +11,7 @@
 
 #include <X11/X.h>
 #include <X11/Xutil.h>
+#include <X11/XKBlib.h>
 #include <X11/cursorfont.h>
 
 #include <libspice.h>
@@ -178,10 +179,10 @@ int main(int argc, char **argv)
                     goto quit;
                 }
 
-                spice_send_key(spice, event.xkey.keycode, keysym, false);
+                spice_send_key_press(spice, event.xkey.keycode, keysym);
                 break;
             case KeyRelease:
-                spice_send_key(spice, event.xkey.keycode, keysym, true);
+                spice_send_key_release(spice, event.xkey.keycode, keysym);
                 break;
             case MotionNotify: {
                 XButtonEvent *mouse_event;
@@ -191,10 +192,10 @@ int main(int argc, char **argv)
                 }
                 break;
             case ButtonPress:
-                spice_send_mouse_button(spice, event.xbutton.button, false);
+                spice_send_mouse_button_press(spice, event.xbutton.button);
                 break;
             case ButtonRelease:
-                spice_send_mouse_button(spice, event.xbutton.button, true);
+                spice_send_mouse_button_release(spice, event.xbutton.button);
                 break;
             }
         }
