@@ -24,6 +24,10 @@ static void display_copy_palette(const spice_t *spice, const uint8_t *src,
         uint8_t **srcp, spice_bitmap_t *dst);
 static void display_copy_bitmap(const spice_t *spice, const uint8_t *src,
         const spice_image_t *img, spice_bitmap_t *dst);
+static void spice_send_key(spice_t *spice, uint32_t keycode,
+        KeySym keysym, bool up);
+static void spice_send_mouse_button(spice_t *spice, unsigned int button,
+        bool up);
 
 static bool spice_init_channel(const spice_t *spice, uint8_t channel_type,
         uint32_t common_caps, uint32_t channel_caps)
@@ -841,7 +845,31 @@ static void display_copy_bitmap(const spice_t *spice, const uint8_t *src,
     dst->data = p;
 }
 
-SP_EXPORT void spice_send_key(spice_t *spice, uint32_t keycode,
+SP_EXPORT void spice_send_key_release(spice_t *spice, uint32_t keycode,
+        uint64_t keysym)
+{
+    spice_send_key(spice, keycode, keysym, true);
+}
+
+SP_EXPORT void spice_send_key_press(spice_t *spice, uint32_t keycode,
+        uint64_t keysym)
+{
+    spice_send_key(spice, keycode, keysym, false);
+}
+
+SP_EXPORT void spice_send_mouse_button_release(spice_t *spice,
+        unsigned int button)
+{
+    spice_send_mouse_button(spice, button, true);
+}
+
+SP_EXPORT void spice_send_mouse_button_press(spice_t *spice,
+        unsigned int button)
+{
+    spice_send_mouse_button(spice, button, false);
+}
+
+static void spice_send_key(spice_t *spice, uint32_t keycode,
         KeySym keysym, bool up)
 {
     int sd = spice->sd_inputs;
@@ -907,7 +935,8 @@ SP_EXPORT void spice_send_mouse_motion(spice_t *spice, int x, int y)
     send(spice->sd_inputs, buf, sizeof(buf), 0);
 }
 
-void spice_send_mouse_button(spice_t *spice, unsigned int button, bool up)
+static void spice_send_mouse_button(spice_t *spice, unsigned int button,
+        bool up)
 {
     spice_msgc_mouse_button_t mouse = {0};
     spice_data_header_t input_data_hdr = {0};

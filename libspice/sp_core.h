@@ -3,6 +3,9 @@
 
 #define SP_EXPORT __attribute__((visibility("default")))
 
+#include <stdatomic.h>
+#include <netinet/in.h>
+
 struct spice {
     int sd_main;
     int sd_display;
