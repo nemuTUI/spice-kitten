@@ -24,7 +24,7 @@ int main(int argc, char **argv)
     int x11_fd;
     fd_set fdset;
     struct timeval tv;
-    bool alt_down = false;
+    bool ctrl_down = false;
     bool mouse_hide = false;
     bool system_clear = true;
     pthread_t display_th, main_th, screen_th;
@@ -168,13 +168,13 @@ int main(int argc, char **argv)
 
             switch (event.type) {
             case KeyPress:
-                if (keysym == XK_Alt_L) {
-                    alt_down = true;
-                } else if (keysym != XK_q && alt_down) {
-                    alt_down = false;
+                if (keysym == XK_Control_L) {
+                    ctrl_down = true;
+                } else if (keysym != XK_q && ctrl_down) {
+                    ctrl_down = false;
                 }
 
-                if (alt_down && keysym == XK_q) {
+                if (ctrl_down && keysym == XK_q) {
                     spice_cancel(spice);
                     goto quit;
                 }
