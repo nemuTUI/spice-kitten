@@ -1,4 +1,3 @@
-#include <time.h>
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -7,38 +6,31 @@
 #include <string.h>
 #include <stdbool.h>
 #include <pthread.h>
-#include <sys/select.h>
-
-#include <X11/X.h>
-#include <X11/Xutil.h>
-#include <X11/XKBlib.h>
-#include <X11/cursorfont.h>
 
 #include <libspice.h>
+
+#include "input.h"
 
 #define LOG_PATH "/tmp/spice_client.log"
 
 int main(int argc, char **argv)
 {
-    int rc = 0, opt;
-    int x11_fd;
-    fd_set fdset;
-    struct timeval tv;
-    bool ctrl_down = false;
-    bool mouse_hide = false;
-    bool system_clear = true;
+    const input_backend_t *backend = NULL;
     pthread_t display_th, main_th, screen_th;
-    Display *display;
-    Window root_window, focus_window;
-    XEvent event;
-    Cursor xcursor;
-    int revert_to;
     char *spice_addr = NULL;
     char *log_path = NULL;
+    const char *backend_name = "tty";
     int port = SPICE_DEFAULT_PORT;
+    bool mouse_hide = false;
+    bool system_clear = true;
     spice_t *spice;
+    int rc = 0, opt;
 
+#ifdef HAVE_X11
+    while ((opt = getopt(argc, argv, "a:p:b:vmhc")) != -1) {
+#else
     while ((opt = getopt(argc, argv, "a:p:vmhc")) != -1) {
+#endif
         switch (opt) {
         case 'a':
             spice_addr = strdup(optarg);
@@ -53,6 +45,15 @@ int main(int argc, char **argv)
                 exit(EXIT_FAILURE);
             }
             break;
+#ifdef HAVE_X11
+        case 'b':
+            if (strcmp(optarg, "tty") != 0 && strcmp(optarg, "x11") != 0) {
+                fprintf(stderr, "unknown backend: %s\n", optarg);
+                exit(EXIT_FAILURE);
+            }
+            backend_name = optarg;
+            break;
+#endif
         case 'v':
             log_path = strdup(LOG_PATH);
             if (!log_path) {
@@ -69,12 +70,15 @@ int main(int argc, char **argv)
         case 'h':
             printf("Usage: %s\n"
                    "Options:\n"
-                   " -a <addr> - IPv4 address (default: %s)\n"
-                   " -p <port> - SPICE port (default: %u)\n"
-                   " -v        - enable log\n"
-                   " -m        - hide mouse cursor\n"
-                   " -c        - clear screen using an escape sequence\n"
-                   " -h        - print help and exit\n",
+                   " -a <addr>    - IPv4 address (default: %s)\n"
+                   " -p <port>    - SPICE port (default: %u)\n"
+#ifdef HAVE_X11
+                   " -b <backend> - input backend: tty(default), x11\n"
+#endif
+                   " -v           - enable log\n"
+                   " -m           - hide mouse cursor\n"
+                   " -c           - clear screen using an escape sequence\n"
+                   " -h           - print help and exit\n",
                    *argv, SPICE_DEFAULT_ADDR, SPICE_DEFAULT_PORT);
             exit(EXIT_SUCCESS);
         }
@@ -86,6 +90,14 @@ int main(int argc, char **argv)
             fprintf(stderr, "%s: %s\n", __func__, strerror(errno));
             exit(EXIT_FAILURE);
         }
+    }
+
+    if (strcmp(backend_name, "tty") == 0) {
+        backend = &tty_input;
+#ifdef HAVE_X11
+    } else if (strcmp(backend_name, "x11") == 0) {
+        backend = &x11_input;
+#endif
     }
 
     if ((spice = spice_init(spice_addr, port, log_path)) == NULL) {
@@ -120,9 +132,8 @@ int main(int argc, char **argv)
     } else {
         printf("\033[0;0H");
     }
-    display = XOpenDisplay(NULL);
-    if (display == NULL) {
-        fprintf(stderr, "unable to open X display\n");
+
+    if (backend->init(spice, mouse_hide) != 0) {
         rc = 1;
         goto out;
     }
@@ -130,88 +141,23 @@ int main(int argc, char **argv)
     if (pthread_create(&screen_th, NULL,
                 spice_draw_screen, spice) != 0) {
         fprintf(stderr, "failed to create screen thread\n");
+        backend->cleanup();
         exit(EXIT_FAILURE);
     }
 
-    root_window = DefaultRootWindow(display);
-    xcursor = XCreateFontCursor(display, XC_arrow);
-    XGetInputFocus(display, &focus_window, &revert_to);
-    XGrabKeyboard(display, root_window, False,
-            GrabModeAsync, GrabModeAsync, CurrentTime);
-    XGrabPointer(display, focus_window, False,
-            PointerMotionMask | ButtonPressMask | ButtonReleaseMask,
-            GrabModeAsync, GrabModeAsync, focus_window,
-            mouse_hide ? None : xcursor, CurrentTime);
-    x11_fd = ConnectionNumber(display);
+    rc = backend->run(spice);
 
-    for (;;) {
-        int fds;
-
-        FD_ZERO(&fdset);
-        FD_SET(x11_fd, &fdset);
-        tv.tv_usec = 0;
-        tv.tv_sec = 1;
-
-        fds = select(x11_fd + 1, &fdset, NULL, NULL, &tv);
-        if (fds < 0) {
-            goto out;
-        }
-
-        if (spice_is_canceled(spice)) {
-            goto quit;
-        }
-
-        while (XPending(display)) {
-            XNextEvent(display, &event);
-            KeySym keysym = XkbKeycodeToKeysym(display,
-                    event.xkey.keycode, 0, 0);
-
-            switch (event.type) {
-            case KeyPress:
-                if (keysym == XK_Control_L) {
-                    ctrl_down = true;
-                } else if (keysym != XK_q && ctrl_down) {
-                    ctrl_down = false;
-                }
-
-                if (ctrl_down && keysym == XK_q) {
-                    spice_cancel(spice);
-                    goto quit;
-                }
-
-                spice_send_key_press(spice, event.xkey.keycode, keysym);
-                break;
-            case KeyRelease:
-                spice_send_key_release(spice, event.xkey.keycode, keysym);
-                break;
-            case MotionNotify: {
-                XButtonEvent *mouse_event;
-
-                mouse_event = (XButtonEvent *) &event;
-                spice_send_mouse_motion(spice, mouse_event->x, mouse_event->y);
-                }
-                break;
-            case ButtonPress:
-                spice_send_mouse_button_press(spice, event.xbutton.button);
-                break;
-            case ButtonRelease:
-                spice_send_mouse_button_release(spice, event.xbutton.button);
-                break;
-            }
-        }
+    if (rc == 0) {
+        pthread_join(screen_th, NULL);
+        pthread_join(display_th, NULL);
+        pthread_join(main_th, NULL);
+        spice_deinit(spice);
     }
+    backend->cleanup();
 
-quit:
-    pthread_join(screen_th, NULL);
-    pthread_join(display_th, NULL);
-    pthread_join(main_th, NULL);
-    spice_deinit(spice);
-    XUngrabKeyboard(display, CurrentTime);
-    XUngrabPointer(display, CurrentTime);
-    XFreeCursor(display, xcursor);
-    XCloseDisplay(display);
+out:
     free(log_path);
     free(spice_addr);
-out:
     return rc;
 }
+/* vim:set ts=4 sw=4: */

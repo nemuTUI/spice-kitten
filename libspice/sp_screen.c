@@ -143,12 +143,16 @@ SP_EXPORT void *spice_draw_screen(void *ctx)
 
         munmap(png_buf.data, max_png_len);
         close(shm_fd);
-        printf("\x1b_Gi=42,q=2,a=T,C=1,c=%u,r=%u,t=s,f=100;%s\x1b\x5c",
-                win.ws_col, win.ws_row, png_path);
-
-        fflush(stdout);
+        if (!atomic_load(&spice->stop)) {
+            printf("\x1b_Gi=42,q=2,a=T,C=1,c=%u,r=%u,t=s,f=100;%s\x1b\x5c",
+                    win.ws_col, win.ws_row, png_path);
+            fflush(stdout);
+        }
         atomic_store(&spice->data_ready, false);
     }
+
+    printf("\x1b_Ga=d,d=i,i=42,q=2;\x1b\x5c");
+    fflush(stdout);
 
     free(png_path);
 

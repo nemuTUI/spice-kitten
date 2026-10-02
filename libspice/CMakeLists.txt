@@ -10,8 +10,6 @@ find_package(PkgConfig REQUIRED)
 
 pkg_check_modules(SPICE_PROTOCOL REQUIRED spice-protocol)
 
-find_package(X11 REQUIRED)
-
 find_path(CRYPTO_INCLUDE_DIR openssl/crypto.h)
 find_library(CRYPTO_LIB crypto)
 if(NOT CRYPTO_LIB OR NOT CRYPTO_INCLUDE_DIR)
@@ -28,7 +26,6 @@ if(NOT PNG_FOUND)
 endif()
 
 message(STATUS "Found spice-protocol: ${SPICE_PROTOCOL_VERSION}")
-message(STATUS "Found X11: ${X11_FOUND}")
 message(STATUS "Found crypto: ${CRYPTO_LIB}")
 message(STATUS "Found png: ${PNG_FOUND}")
 
@@ -46,7 +43,6 @@ set_target_properties(spice PROPERTIES
 
 target_link_libraries(spice
     m
-    X11::X11
     ${CRYPTO_LIB}
     PNG::PNG
     ${SPICE_PROTOCOL_LIBRARIES}
