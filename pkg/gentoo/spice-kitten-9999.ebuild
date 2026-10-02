@@ -13,10 +13,18 @@ SRC_URI=""
 
 LICENSE="BSD-2"
 SLOT="0"
+IUSE="+x11"
 
 RDEPEND="
 	dev-libs/openssl
 	media-libs/libpng
-	x11-libs/libX11"
+	x11? ( x11-libs/libX11 )"
 DEPEND="${RDEPEND}
 	app-emulation/spice-protocol"
+
+src_configure() {
+	local mycmakeargs=(
+		-DWITH_X11=$(usex x11)
+	)
+	cmake_src_configure
+}

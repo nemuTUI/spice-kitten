@@ -9,14 +9,11 @@
 
 #include <spice/protocol.h>
 
-#include <X11/Xutil.h>
-
-#define ATKB_RELEASE   0x80
-#define ATKB_X11_SHIFT 0x08
-#define ATKB_UP        0x48
-#define ATKB_LEFT      0x4b
-#define ATKB_RIGHT     0x4d
-#define ATKB_DOWN      0x50
+#define ATKB_RELEASE 0x80
+#define ATKB_UP      0x48
+#define ATKB_LEFT    0x4b
+#define ATKB_RIGHT   0x4d
+#define ATKB_DOWN    0x50
 
 static void display_copy_image(const spice_t *spice, const uint8_t *src,
         uint8_t **srcp, spice_image_t **img);
@@ -25,7 +22,7 @@ static void display_copy_palette(const spice_t *spice, const uint8_t *src,
 static void display_copy_bitmap(const spice_t *spice, const uint8_t *src,
         const spice_image_t *img, spice_bitmap_t *dst);
 static void spice_send_key(spice_t *spice, uint32_t keycode,
-        KeySym keysym, bool up);
+        uint32_t keysym, bool up);
 static void spice_send_mouse_button(spice_t *spice, unsigned int button,
         bool up);
 
@@ -250,7 +247,7 @@ SP_EXPORT void *spice_channel_main_loop(void *ctx)
                 pr_debug(spice, "* state (main): RECV_HDR\n");
 
                 recv_len = recv(spice->sd_main, data_hdrp, sizeof(data_hdr), 0);
-                if (recv_len == 0) {
+                if (recv_len <= 0) { /* end-of-file or connection reset */
                     atomic_store(&spice->stop, true);
                     pr_debug(spice, "main channel closed from server side\n");
                     break;
@@ -279,6 +276,11 @@ SP_EXPORT void *spice_channel_main_loop(void *ctx)
                         pr_debug(spice, "Other (main): %u\n", data_hdr.type);
                         if (data_hdr.size) {
                             state = RECV_OTHER_DATA;
+                        } else {
+                            /* a zero-size message is complete already:
+                             * the server counts it toward the ack
+                             * window even if we do not */
+                            msg_received++;
                         }
                         break;
                     }
@@ -379,6 +381,7 @@ SP_EXPORT void *spice_channel_main_loop(void *ctx)
                     recv_len_total = 0;
                     free(buf);
                     buf = NULL;
+                    msg_received++; /* the message counts too */
                 }
                 break;
             }
@@ -387,7 +390,7 @@ SP_EXPORT void *spice_channel_main_loop(void *ctx)
             pr_debug(spice, "timeout...(main)\n");
         }
 
-        if (ack_frequency && ack_frequency == msg_received) {
+        if (ack_frequency && msg_received >= ack_frequency) {
             data_hdr.type = SPICE_MSGC_ACK;
             data_hdr.size = 0;
             send(spice->sd_main, &data_hdr, sizeof(data_hdr), 0);
@@ -434,6 +437,8 @@ channel_init:
     buf = NULL;
 
     if (!spice_connect(spice, SPICE_CHANNEL_DISPLAY)) {
+        /* no signal from the VM anymore: stop the whole app */
+        atomic_store(&spice->stop, true);
         return NULL;
     }
 
@@ -443,6 +448,7 @@ channel_init:
     if (spice_init_channel(spice, SPICE_CHANNEL_DISPLAY,
                 common_caps, channel_caps) == false) {
         pr_debug(spice, "%s: failed to create display channel\n", __func__);
+        atomic_store(&spice->stop, true);
         return NULL;
     }
 
@@ -490,6 +496,11 @@ channel_init:
 
                 recv_len = recv(spice->sd_display, data_hdrp,
                         sizeof(data_hdr), 0);
+                if (recv_len <= 0) { /* end-of-file or connection reset */
+                    atomic_store(&spice->stop, true);
+                    pr_debug(spice, "display channel closed from server side\n");
+                    break;
+                }
                 recv_len_total = recv_len;
                 data_hdrp += recv_len;
 
@@ -522,6 +533,11 @@ channel_init:
                         pr_debug(spice, "Other: %u\n", data_hdr.type);
                         if (data_hdr.size) {
                             state = RECV_OTHER_DATA;
+                        } else {
+                            /* a zero-size message is complete already:
+                             * the server counts it toward the ack
+                             * window even if we do not */
+                            msg_received++;
                         }
                         break;
                     }
@@ -584,16 +600,22 @@ channel_init:
                     pr_debug(spice, "destroy surface_id: %u\n",
                             surface_destroy->surface_id);
                     atomic_store(&spice->data_ready, false);
-                    fclose(fp);
+                    if (fp) {
+                        fclose(fp);
+                        fp = NULL;
+                    }
                     free(spice->bmp_buf);
                     spice->bmp_buf = NULL;
-                    fp = NULL;
 
                     state = RECV_HDR;
                     recv_len_total = 0;
                     free(buf);
                     buf = NULL;
                     spice_disconnect(spice, SPICE_CHANNEL_DISPLAY);
+                    if (atomic_load(&spice->stop)) {
+                        /* the session is over: no reconnect */
+                        goto channel_closed;
+                    }
                     goto channel_init;
                 }
                 break;
@@ -765,6 +787,7 @@ channel_init:
                     recv_len_total = 0;
                     free(buf);
                     buf = NULL;
+                    msg_received++; /* the message counts too */
                 }
                 break;
             }
@@ -773,7 +796,7 @@ channel_init:
             pr_debug(spice, "timeout...\n");
         }
 
-        if (ack_frequency && ack_frequency == msg_received) {
+        if (ack_frequency && msg_received >= ack_frequency) {
             data_hdr.type = SPICE_MSGC_ACK;
             data_hdr.size = 0;
             send(spice->sd_display, &data_hdr, sizeof(data_hdr), 0);
@@ -782,13 +805,16 @@ channel_init:
         }
         if (atomic_load(&spice->stop)) {
             free(buf);
-            fclose(fp);
+            if (fp) {
+                fclose(fp);
+            }
             spice_disconnect(spice, SPICE_CHANNEL_DISPLAY);
             pr_debug(spice, "stopping display channel\n");
             break;
         }
     }
 
+channel_closed:
     printf("\x1b_Ga=d,d=i,i=42,q=2;\x1b\x5c");
 
     return NULL;
@@ -846,13 +872,13 @@ static void display_copy_bitmap(const spice_t *spice, const uint8_t *src,
 }
 
 SP_EXPORT void spice_send_key_release(spice_t *spice, uint32_t keycode,
-        uint64_t keysym)
+        uint32_t keysym)
 {
     spice_send_key(spice, keycode, keysym, true);
 }
 
 SP_EXPORT void spice_send_key_press(spice_t *spice, uint32_t keycode,
-        uint64_t keysym)
+        uint32_t keysym)
 {
     spice_send_key(spice, keycode, keysym, false);
 }
@@ -870,14 +896,12 @@ SP_EXPORT void spice_send_mouse_button_press(spice_t *spice,
 }
 
 static void spice_send_key(spice_t *spice, uint32_t keycode,
-        KeySym keysym, bool up)
+        uint32_t keysym, bool up)
 {
     int sd = spice->sd_inputs;
     spice_data_header_t input_data_hdr = {0};
     spice_msgc_key_t key = {0};
     unsigned char buf[sizeof(input_data_hdr) + sizeof(key)] = {0};
-
-    keycode -= ATKB_X11_SHIFT;
 
     input_data_hdr.serial = spice->serial++;
     input_data_hdr.type = up ?
@@ -885,16 +909,16 @@ static void spice_send_key(spice_t *spice, uint32_t keycode,
     input_data_hdr.size = sizeof(key);
 
     switch (keysym) {
-    case XK_Up:
+    case SPICE_KS_UP:
         keycode = ATKB_UP;
         break;
-    case XK_Left:
+    case SPICE_KS_LEFT:
         keycode = ATKB_LEFT;
         break;
-    case XK_Right:
+    case SPICE_KS_RIGHT:
         keycode = ATKB_RIGHT;
         break;
-    case XK_Down:
+    case SPICE_KS_DOWN:
         keycode = ATKB_DOWN;
         break;
     }
